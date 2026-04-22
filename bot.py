@@ -953,6 +953,20 @@ async def _delete_message_safely(message: discord.Message):
     except Exception:
         pass
 
+async def _delete_forum_post_if_starter(message: discord.Message):
+    """
+    In Discord Forum channels, a "post" is a Thread.
+    If the flagged message is the starter message, delete the whole thread.
+    """
+    try:
+        if isinstance(message.channel, discord.Thread):
+            starter_id = getattr(message.channel, "starter_message_id", None)
+            # In many cases the starter message id matches the thread id; handle both.
+            if message.id == message.channel.id or (starter_id is not None and message.id == starter_id):
+                await message.channel.delete(reason="Forum post violated filters")
+    except Exception:
+        pass
+
 async def handle_stitched_bypass(message: discord.Message, guild_member: discord.Member, is_edit: bool):
     """
     Detect "letter-by-letter" bypass across multiple users (e.g., 🇸 then 🇰 then 🇮 then 🇩),
@@ -1078,6 +1092,9 @@ async def process_message(message, is_edit=False):
             await message.delete()
         except discord.Forbidden:
             pass
+
+        # If this was a forum post starter message, delete the entire post/thread too.
+        await _delete_forum_post_if_starter(message)
         
         # Log non-English detection
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
@@ -1112,6 +1129,9 @@ async def process_message(message, is_edit=False):
             await message.delete()
         except discord.Forbidden:
             pass
+
+        # If this was a forum post starter message, delete the entire post/thread too.
+        await _delete_forum_post_if_starter(message)
         
         # Log violation
         log_channel = bot.get_channel(LOG_CHANNEL_ID)
