@@ -8,6 +8,7 @@ import datetime
 from dotenv import load_dotenv
 import unicodedata
 from aiohttp import web
+from collections import defaultdict, deque
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -38,9 +39,14 @@ BLOCKED_MESSAGES = [
 ]
 
 BLOCKED_WORDS = [
-    "crack", "cracked", "copypaster", "paster", "ghost", "niga", "skid", "skidded", 
+    "crack", "cracked",
+    "copypaste", "copypaster",
+    "paste", "pasted", "pasting", "paster",
+    "ghost",
+    "niga",
+    "skid", "skidded",
     "skidder", "skidding", "script kiddie", "scriptkiddie", "sk1d", "sk!d", "sk!dded",
-    "skidd", "skido", "pasting"
+    "skidd", "skido"
 ]
 
 WHITELIST_WORDS = [
@@ -48,7 +54,8 @@ WHITELIST_WORDS = [
     "skeleton", "skilled", "skiing", "skincare", "asking", "risking", "whisker", "brisket",
     "basket", "casket", "gasket", "masked", "asked", "tasked", "flask", "mask",
     "fantastic", "astic", "drastic", "plastic", "elastic", "classic", "jurassic",
-    "ghost writer", "ghosting", "ghostly", "ghosted", "past", "paste", "pasted"
+    # NOTE: keep this list for real false-positives only.
+    # User requested removing all ghost/paste/past whitelist entries.
 ]
 
 # Allowed domains (whitelist)
@@ -71,6 +78,10 @@ ALLOWED_DOMAINS = [
 # === AUTO-REPLY PATTERNS ===
 
 AUTO_REPLY_PATTERNS = {
+    r'(?i)\b(?:how\s+to\s+buy|where\s+to\s+buy|how\s+do\s+i\s+buy|how\s+can\s+i\s+buy|how\s+to\s+get|where\s+to\s+get)\b.*\b(?:premium\s+)?key\b': {
+        'response': "You Can Buy Premium Key At https://discord.com/channels/1453057495034495069/1453066695022477617 ",
+        'description': 'Premium key purchase (canonical reply)'
+    },
     r'(?i)(?:does|do|is)\s+(?:melee\s+)?(?:reach|aura)\s+(?:work|working)\s*(?:with|on)?\s*(?:fire\s+axe|axe)?': {
         'response': "Yes, it's working! 🔥",
         'description': 'Melee reach/aura functionality'
@@ -418,6 +429,72 @@ def comprehensive_unicode_to_ascii(text):
     
     return ''.join(result)
 
+REGIONAL_INDICATOR_TEXT_RE = re.compile(r':regional_indicator_([a-z]):', re.IGNORECASE)
+CUSTOM_EMOJI_RE = re.compile(r'<a?:\w+:\d+>')
+ZERO_WIDTH_RE = re.compile(r'[\u200b-\u200f\u2060\ufeff]')
+
+def _normalize_for_word_detection(text: str) -> str:
+    """
+    Normalize text aggressively for bypass-resistant matching:
+    - convert fancy unicode letters/flags to ASCII (via comprehensive_unicode_to_ascii)
+    - decode :regional_indicator_a: style tokens into letters
+    - demojize unicode emojis (so 🇦 also becomes :regional_indicator_a:)
+    - strip zero-width chars and most separators
+    - apply leetspeak-ish replacements (p2ster -> paster, sk1d -> skid, etc)
+    Returns: lowercase letters+digits only (no spaces).
+    """
+    if not text:
+        return ""
+
+    # Remove custom emoji tags early; we don't want them to act like letters.
+    text = CUSTOM_EMOJI_RE.sub(" ", text)
+    text = ZERO_WIDTH_RE.sub("", text)
+
+    # Convert unicode variants to ASCII (includes 🇦-🇿 -> A-Z).
+    text = comprehensive_unicode_to_ascii(text)
+
+    # If user typed the textual token, decode it.
+    text = REGIONAL_INDICATOR_TEXT_RE.sub(lambda m: m.group(1), text)
+
+    # Demojize then decode again (covers unicode regional indicator emojis too).
+    try:
+        dem = emoji.demojize(text)
+        dem = REGIONAL_INDICATOR_TEXT_RE.sub(lambda m: m.group(1), dem)
+        text = dem
+    except Exception:
+        pass
+
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = text.lower()
+
+    # Leetspeak / common substitutions (tuned for your examples)
+    replacements = {
+        "0": "o",
+        "1": "i",
+        "!": "i",
+        "3": "e",
+        "4": "a",
+        "@": "a",
+        "5": "s",
+        "$": "s",
+        "7": "t",
+        "8": "b",
+        "2": "a",  # p2ster -> paster
+    }
+    text = "".join(replacements.get(ch, ch) for ch in text)
+
+    # Keep only letters+digits (no spaces/punct). This catches s k i d, s|k|i|d, ascii art separators, etc.
+    return re.sub(r"[^a-z0-9]+", "", text)
+
+def _extract_letter_payload(text: str) -> str:
+    """
+    Extract just the "letter-ish" payload from a message, for cross-message stitching.
+    We only keep A-Z from any sources (normal text, unicode fancy, flags, regional_indicator tokens).
+    """
+    normalized = _normalize_for_word_detection(text)
+    return re.sub(r"[^a-z]+", "", normalized)
+
 def detect_flag_emojis(text):
     """Detect ALL flag emoji patterns"""
     if not text:
@@ -656,7 +733,7 @@ def check_blocked_words_ultimate(text):
                         violations.append(f"Blocked word (ASCII art): '{blocked}' detected in art pattern")
     
     # Check for leetspeak and number substitutions
-    leetspeak_map = {'3': 'e', '1': 'i', '0': 'o', '4': 'a', '5': 's', '7': 't', '8': 'b'}
+    leetspeak_map = {'3': 'e', '1': 'i', '0': 'o', '4': 'a', '5': 's', '7': 't', '8': 'b', '2': 'a'}
     leet_converted = converted.lower()
     for num, letter in leetspeak_map.items():
         leet_converted = leet_converted.replace(num, letter)
@@ -666,6 +743,14 @@ def check_blocked_words_ultimate(text):
         blocked_clean = re.sub(r'[^a-z]', '', blocked.lower())
         if len(blocked_clean) >= 2 and blocked_clean in leet_normalized:
             violations.append(f"Blocked word (leetspeak): '{blocked}' detected")
+
+    # NEW: Ultra-aggressive normalization pass (captures :regional_indicator_a:, zero-width, punctuation, etc)
+    ultra = _normalize_for_word_detection(text)
+    for blocked in BLOCKED_WORDS:
+        blocked_clean = re.sub(r'[^a-z0-9]', '', blocked.lower())
+        blocked_clean = _normalize_for_word_detection(blocked_clean)
+        if blocked_clean and blocked_clean in ultra:
+            violations.append(f"Blocked word (normalized): '{blocked}' detected")
     
     return len(violations) > 0, list(set(violations))
 
@@ -805,6 +890,118 @@ def check_auto_reply(message_content):
             return reply_data['response']
     return None
 
+# === EMOJI / LETTER-BY-LETTER BYPASS DETECTION (CROSS-MESSAGE) ===
+
+CHANNEL_STITCH_WINDOW_SECONDS = 12
+CHANNEL_STITCH_MAX_MESSAGES = 18
+USER_SPAM_WINDOW_SECONDS = 10
+USER_SPAM_MAX_MESSAGES = 7
+
+_recent_channel_payloads = defaultdict(lambda: deque(maxlen=CHANNEL_STITCH_MAX_MESSAGES))
+_recent_user_payloads = defaultdict(lambda: deque(maxlen=USER_SPAM_MAX_MESSAGES))
+
+def _now_utc():
+    return datetime.datetime.now(datetime.timezone.utc)
+
+def _is_mostly_emoji_or_letters(msg: str) -> bool:
+    if not msg:
+        return False
+    # If it has almost no alphanumerics after normalization, it's probably emoji/symbol spam.
+    norm = _normalize_for_word_detection(msg)
+    return len(norm) <= 4 or (len(norm) <= 12 and len(re.sub(r'[^a-z]', '', norm)) >= max(1, len(norm) - 2))
+
+def _check_blocked_in_stitched_payload(payload: str):
+    if not payload:
+        return False, None
+    for blocked in BLOCKED_WORDS:
+        b = _normalize_for_word_detection(blocked)
+        if b and b in payload:
+            return True, blocked
+    return False, None
+
+async def _delete_message_safely(message: discord.Message):
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+async def handle_stitched_bypass(message: discord.Message, guild_member: discord.Member, is_edit: bool):
+    """
+    Detect "letter-by-letter" bypass across multiple users (e.g., 🇸 then 🇰 then 🇮 then 🇩),
+    and per-user emoji spam bursts. Deletes all contributing messages.
+    Returns True if it deleted (and caller should stop further processing for this message).
+    """
+    if not message or not message.content:
+        return False
+
+    ts = _now_utc()
+    channel_id = message.channel.id
+    author_id = message.author.id
+
+    payload_letters = _extract_letter_payload(message.content)
+    is_payload_candidate = bool(payload_letters) and (len(payload_letters) <= 6 or _is_mostly_emoji_or_letters(message.content))
+
+    # --- Per-user spam (same emoji / random emoji bursts) ---
+    user_q = _recent_user_payloads[author_id]
+    user_q.append((ts, message, payload_letters))
+    # Drop old
+    while user_q and (ts - user_q[0][0]).total_seconds() > USER_SPAM_WINDOW_SECONDS:
+        user_q.popleft()
+
+    if len(user_q) >= 5:
+        letters_joined = "".join(x[2] for x in user_q if x[2])
+        # If user is spamming mostly emoji/letters quickly, kill the latest message(s)
+        if letters_joined and len(letters_joined) <= 20 and all(_is_mostly_emoji_or_letters(x[1].content) for x in list(user_q)[-5:]):
+            await _delete_message_safely(message)
+            return True
+
+    # --- Cross-user stitching in channel ---
+    if not is_payload_candidate:
+        return False
+
+    ch_q = _recent_channel_payloads[channel_id]
+    ch_q.append((ts, message, payload_letters, author_id))
+    while ch_q and (ts - ch_q[0][0]).total_seconds() > CHANNEL_STITCH_WINDOW_SECONDS:
+        ch_q.popleft()
+
+    stitched = "".join(item[2] for item in ch_q if item[2])
+    hit, blocked = _check_blocked_in_stitched_payload(stitched)
+    if not hit:
+        return False
+
+    # Delete contributing messages until the blocked word is covered
+    # (delete the most recent chain; this is aggressive by design)
+    to_delete = []
+    accum = ""
+    for item in reversed(ch_q):
+        to_delete.append(item[1])
+        accum = item[2] + accum
+        if _normalize_for_word_detection(blocked) in _normalize_for_word_detection(accum):
+            break
+
+    for msg in to_delete:
+        await _delete_message_safely(msg)
+
+    # Log (optional)
+    log_channel = bot.get_channel(LOG_CHANNEL_ID)
+    if log_channel:
+        try:
+            title = "🚫 Emoji/Letter Stitch Bypass Blocked" if not is_edit else "🚫 Edited Emoji/Letter Stitch Bypass Blocked"
+            embed = discord.Embed(
+                title=title,
+                description=f"**Trigger User:** {guild_member.mention}\n**Channel:** {message.channel.mention}",
+                color=0xff4444,
+                timestamp=_now_utc()
+            )
+            embed.add_field(name="Detected Word", value=f"`{blocked}`", inline=True)
+            embed.add_field(name="Stitched Payload", value=f"`{stitched[-80:]}`", inline=False)
+            embed.add_field(name="Deleted Messages", value=str(len(to_delete)), inline=True)
+            await log_channel.send(embed=embed)
+        except Exception:
+            pass
+
+    return True
+
 # === MESSAGE PROCESSING ===
 
 async def process_message(message, is_edit=False):
@@ -831,6 +1028,13 @@ async def process_message(message, is_edit=False):
     # If user has bypass role, skip moderation
     if any(role.id in BYPASS_ROLES for role in guild_member.roles):
         return
+
+    # Fast bypass detection for emoji-letter chains and emoji spam (including multi-account stitching)
+    try:
+        if await handle_stitched_bypass(message, guild_member, is_edit=is_edit):
+            return
+    except Exception:
+        pass
     
     # Check STRICT non-English - ONLY ENGLISH ALLOWED
     if detect_non_english(message.content):
