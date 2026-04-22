@@ -450,7 +450,33 @@ def comprehensive_unicode_to_ascii(text):
 
 REGIONAL_INDICATOR_TEXT_RE = re.compile(r':regional_indicator_([a-z]):', re.IGNORECASE)
 CUSTOM_EMOJI_RE = re.compile(r'<a?:\w+:\d+>')
+CUSTOM_EMOJI_NAME_RE = re.compile(r'<a?:([A-Za-z0-9_]+):\d+>')
 ZERO_WIDTH_RE = re.compile(r'[\u200b-\u200f\u2060\ufeff]')
+
+def _custom_emoji_to_letters(text: str) -> str:
+    """
+    Convert custom emojis like <:A:123> or <:regional_indicator_a:123> into letters.
+    This is critical because many bypasses spell words using custom "letter" emojis.
+    """
+    if not text:
+        return ""
+
+    def repl(m: re.Match) -> str:
+        name = (m.group(1) or "").lower()
+        # <:a:...> / <:A_:...> etc
+        if len(name) == 1 and name.isalpha():
+            return name
+        # <:regional_indicator_a:...>
+        ri = re.match(r"regional_indicator_([a-z])$", name)
+        if ri:
+            return ri.group(1)
+        # common naming like :letter_a: or :a_:
+        letter = re.match(r"(?:letter_)?([a-z])$", name)
+        if letter:
+            return letter.group(1)
+        return " "
+
+    return CUSTOM_EMOJI_NAME_RE.sub(repl, text)
 
 def _normalize_for_word_detection(text: str) -> str:
     """
@@ -465,8 +491,8 @@ def _normalize_for_word_detection(text: str) -> str:
     if not text:
         return ""
 
-    # Remove custom emoji tags early; we don't want them to act like letters.
-    text = CUSTOM_EMOJI_RE.sub(" ", text)
+    # Convert custom emoji tags into letters when possible (prevents letter-emoji bypass).
+    text = _custom_emoji_to_letters(text)
     text = ZERO_WIDTH_RE.sub("", text)
 
     # Convert unicode variants to ASCII (includes 🇦-🇿 -> A-Z).
@@ -514,7 +540,7 @@ def _normalize_alnum_no_digit_swaps(text: str) -> str:
     if not text:
         return ""
 
-    text = CUSTOM_EMOJI_RE.sub(" ", text)
+    text = _custom_emoji_to_letters(text)
     text = ZERO_WIDTH_RE.sub("", text)
     text = comprehensive_unicode_to_ascii(text)
     text = REGIONAL_INDICATOR_TEXT_RE.sub(lambda m: m.group(1), text)
@@ -545,8 +571,10 @@ def _generate_leetspeak_variants(alnum_text: str, max_variants: int = 32):
         "3": ("e",),
         "4": ("a",),
         "5": ("s", "a"),  # important for cr5ck
-        "7": ("t",),
+        "7": ("t", "u"),  # f7ck -> fuck
         "8": ("b",),
+        "6": ("g",),
+        "9": ("g",),
     }
 
     variants = {""}
@@ -572,6 +600,18 @@ def _extract_letter_payload(text: str) -> str:
     """
     normalized = _normalize_for_word_detection(text)
     return re.sub(r"[^a-z]+", "", normalized)
+
+def _is_subsequence(needle: str, haystack: str) -> bool:
+    """Return True if needle is an ordered subsequence of haystack."""
+    if not needle:
+        return False
+    j = 0
+    for ch in haystack:
+        if ch == needle[j]:
+            j += 1
+            if j == len(needle):
+                return True
+    return False
 
 def detect_flag_emojis(text):
     """Detect ALL flag emoji patterns"""
@@ -599,6 +639,33 @@ def detect_flag_emojis(text):
         violations.append("Excessive flag emoji usage detected")
     
     return len(violations) > 0, violations
+
+def detect_regional_indicator_text(text: str):
+    """Detect :regional_indicator_a: style tokens (a-z)."""
+    if not text:
+        return False, []
+
+    violations = []
+
+    # Check literal tokens
+    matches = REGIONAL_INDICATOR_TEXT_RE.findall(text)
+
+    # Also check demojized form (in case unicode flags/emojis get converted)
+    try:
+        dem = emoji.demojize(text)
+        matches.extend(REGIONAL_INDICATOR_TEXT_RE.findall(dem))
+    except Exception:
+        pass
+
+    if not matches:
+        return False, []
+
+    # If user is sending any regional indicator token(s), treat as bypass attempt.
+    seq = "".join(m.lower() for m in matches)
+    if len(matches) >= 1:
+        violations.append(f"Regional indicator token(s) detected: {seq[:40]}")
+
+    return True, violations
 
 def advanced_ascii_art_extraction(text):
     """Enhanced ASCII art extraction with multiple detection methods"""
@@ -847,6 +914,26 @@ def check_blocked_words_ultimate(text):
         if blocked_clean and blocked_clean in ultra:
             violations.append(f"Blocked word (normalized): '{blocked}' detected")
 
+    # NEW: Near-length subsequence check (catches extra letters/repeats like "niggherr")
+    # Only triggers when token length is close to the blocked word length (+0..+3).
+    letters_only = _extract_letter_payload(text)
+    candidates = []
+    if letters_only:
+        candidates.append(letters_only)
+        candidates.extend(re.findall(r"[a-z]{2,}", letters_only))
+
+    for blocked in BLOCKED_WORDS:
+        b = _normalize_for_word_detection(blocked)
+        b = re.sub(r"[^a-z]+", "", b)
+        if len(b) < 4:
+            continue
+        for tok in candidates:
+            if len(tok) < len(b) or len(tok) > len(b) + 3:
+                continue
+            if _is_subsequence(b, tok):
+                violations.append(f"Blocked word (subsequence): '{blocked}' detected")
+                break
+
     # NEW: Ambiguous leetspeak variants (cr5ck -> crack, etc)
     # Keep digits first, then expand variants with multiple possible swaps.
     alnum = _normalize_alnum_no_digit_swaps(text)
@@ -960,6 +1047,10 @@ def analyze_message_content(content):
     # Check for ALL flag emojis
     has_flags, flag_violations = detect_flag_emojis(content)
     violations.extend(flag_violations)
+
+    # Check for :regional_indicator_a: token bypass (A-Z)
+    has_ri, ri_violations = detect_regional_indicator_text(content)
+    violations.extend(ri_violations)
     
     # Check for blocked words with enhanced detection
     has_blocked, blocked_violations = check_blocked_words_ultimate(content)
