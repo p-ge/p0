@@ -40,9 +40,16 @@ BLOCKED_MESSAGES = [
 
 BLOCKED_WORDS = [
     "crack", "cracked",
+    "bypass", "bypassed", "bypassing",
     "copypaste", "copypaster",
     "paste", "pasted", "pasting", "paster",
     "ghost",
+    "lqn",
+    "reulen",
+    "eqr hub", "eqrhub",
+    "magic autofarm", "magicautofarm", "autofarm", "auto farm",
+    "eclipse",
+    "nexo",
     "niga",
     "skid", "skidded",
     "skidder", "skidding", "script kiddie", "scriptkiddie", "sk1d", "sk!d", "sk!dded",
