@@ -645,15 +645,16 @@ def detect_multi_line_art(text):
         special_ratio = special_count / total_chars
 
         # Strong ASCII-art hints: repeated art characters or long lines dominated by symbols
-        if re.search(r'[|\\/_=+\-]{4,}', converted):
+        if re.search(r'[|\\/_=+\-]{4,}', converted) or re.search(r'[._]{6,}', converted):
             art_like_lines += 1
             continue
-        if total_chars > 40 and special_ratio >= 0.25:
+        if total_chars > 25 and special_ratio >= 0.22:
             art_like_lines += 1
             continue
-        if special_ratio >= 0.35 and letter_count <= total_chars * 0.4:
+        if special_ratio >= 0.30 and letter_count <= total_chars * 0.45:
             art_like_lines += 1
 
+    # TAAG-style often has many symbol-heavy lines
     if art_like_lines >= 2:
         return True
 
@@ -662,10 +663,26 @@ def detect_multi_line_art(text):
     if joined:
         avg_len = sum(len(l) for l in lines) / len(lines)
         non_letter_ratio = sum(1 for c in joined if not c.isalpha() and not c.isspace()) / len(joined)
-        if avg_len > 60 and non_letter_ratio > 0.35:
+        # More sensitive for multi-line blocks (TAAG, banners, etc.)
+        if avg_len > 20 and non_letter_ratio > 0.25:
             return True
 
     return False
+
+def detect_multiline_not_pure_letters(text: str) -> bool:
+    """
+    If it's a multi-line block, require it to be "pure letters/spaces" only.
+    This is aimed at TAAG/banner ASCII art where users bypass filters using symbols.
+    """
+    if not text or "\n" not in text:
+        return False
+    lines = [line for line in text.split("\n") if line.strip()]
+    if len(lines) < 3:
+        return False
+
+    converted = comprehensive_unicode_to_ascii(text)
+    # Allow letters + whitespace only. Anything else in a multi-line block = delete.
+    return bool(re.search(r"[^a-zA-Z\\s]", converted))
 
 def is_whitelisted_word(word):
     """Check if word is whitelisted"""
@@ -843,6 +860,10 @@ def analyze_message_content(content):
     # Check for multi-line ASCII art
     if detect_multi_line_art(content):
         violations.append("Multi-line ASCII art detected (likely bypass attempt)")
+
+    # NEW: Multi-line blocks must be pure letters/spaces only (kills TAAG banners)
+    if detect_multiline_not_pure_letters(content):
+        violations.append("Multi-line non-letter banner detected (TAAG/ASCII art)")
     
     # Check for ALL flag emojis
     has_flags, flag_violations = detect_flag_emojis(content)
