@@ -1036,8 +1036,16 @@ async def process_message(message, is_edit=False):
     """Enhanced message processing - SILENT DELETE ONLY - NO DMs, NO WARNINGS"""
     if message.author.bot or not message.guild:
         return
-    
-    if message.channel.id not in MONITORED_CHANNELS:
+
+    # Forum posts are threads; moderate based on the parent forum channel id.
+    effective_channel_id = message.channel.id
+    try:
+        if isinstance(message.channel, discord.Thread) and message.channel.parent_id:
+            effective_channel_id = message.channel.parent_id
+    except Exception:
+        pass
+
+    if effective_channel_id not in MONITORED_CHANNELS:
         await bot.process_commands(message)
         return
     
