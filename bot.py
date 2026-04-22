@@ -40,7 +40,7 @@ BLOCKED_MESSAGES = [
 BLOCKED_WORDS = [
     "crack", "cracked", "copypaster", "paster", "ghost", "niga", "skid", "skidded", 
     "skidder", "skidding", "script kiddie", "scriptkiddie", "sk1d", "sk!d", "sk!dded",
-    "skidd", "skido"
+    "skidd", "skido", "pasting"
 ]
 
 WHITELIST_WORDS = [
