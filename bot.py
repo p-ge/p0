@@ -47,7 +47,7 @@ BLOCKED_WORDS = [
     "lqn",
     "reulen",
     "eqr hub", "eqrhub",
-    "magic autofarm", "magicautofarm", "autofarm", "auto farm",
+    "magic autofarm", "magicautofarm",
     "eclipse",
     "nexo",
     "niga",
