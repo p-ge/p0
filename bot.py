@@ -50,7 +50,9 @@ BLOCKED_WORDS = [
     "magic autofarm", "magicautofarm",
     "eclipse",
     "nexo",
-    "niga",
+    "fuck", "fucker", "fucking",
+    "shit", "shitty",
+    "nigga", "nigger", "niga",
     "skid", "skidded",
     "skidder", "skidding", "script kiddie", "scriptkiddie", "sk1d", "sk!d", "sk!dded",
     "skidd", "skido"
@@ -483,7 +485,7 @@ def _normalize_for_word_detection(text: str) -> str:
         "3": "e",
         "4": "a",
         "@": "a",
-        "5": "s",
+        "5": "s",  # ambiguous; we also try 5->a in the "variant" pass below
         "$": "s",
         "7": "t",
         "8": "b",
@@ -493,6 +495,65 @@ def _normalize_for_word_detection(text: str) -> str:
 
     # Keep only letters+digits (no spaces/punct). This catches s k i d, s|k|i|d, ascii art separators, etc.
     return re.sub(r"[^a-z0-9]+", "", text)
+
+def _normalize_alnum_no_digit_swaps(text: str) -> str:
+    """
+    Similar to _normalize_for_word_detection, but keeps digits as-is (no leetspeak swaps),
+    so we can generate multiple leetspeak variants (e.g., 5 -> s or a).
+    """
+    if not text:
+        return ""
+
+    text = CUSTOM_EMOJI_RE.sub(" ", text)
+    text = ZERO_WIDTH_RE.sub("", text)
+    text = comprehensive_unicode_to_ascii(text)
+    text = REGIONAL_INDICATOR_TEXT_RE.sub(lambda m: m.group(1), text)
+    try:
+        dem = emoji.demojize(text)
+        dem = REGIONAL_INDICATOR_TEXT_RE.sub(lambda m: m.group(1), dem)
+        text = dem
+    except Exception:
+        pass
+
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = text.lower()
+    return re.sub(r"[^a-z0-9]+", "", text)
+
+def _generate_leetspeak_variants(alnum_text: str, max_variants: int = 32):
+    """
+    Generate a small set of leetspeak variants for ambiguous digits.
+    Designed to catch cases like cr5ck (5->a), sh1t (1->i), etc.
+    """
+    if not alnum_text:
+        return {""}
+
+    choices = {
+        "0": ("o",),
+        "1": ("i", "l"),
+        "2": ("a",),
+        "3": ("e",),
+        "4": ("a",),
+        "5": ("s", "a"),  # important for cr5ck
+        "7": ("t",),
+        "8": ("b",),
+    }
+
+    variants = {""}
+    for ch in alnum_text:
+        opts = choices.get(ch, (ch,))
+        new_variants = set()
+        for v in variants:
+            for o in opts:
+                new_variants.add(v + o)
+                if len(new_variants) >= max_variants:
+                    break
+            if len(new_variants) >= max_variants:
+                break
+        variants = new_variants
+        if len(variants) >= max_variants:
+            break
+    return variants
 
 def _extract_letter_payload(text: str) -> str:
     """
@@ -775,6 +836,20 @@ def check_blocked_words_ultimate(text):
         blocked_clean = _normalize_for_word_detection(blocked_clean)
         if blocked_clean and blocked_clean in ultra:
             violations.append(f"Blocked word (normalized): '{blocked}' detected")
+
+    # NEW: Ambiguous leetspeak variants (cr5ck -> crack, etc)
+    # Keep digits first, then expand variants with multiple possible swaps.
+    alnum = _normalize_alnum_no_digit_swaps(text)
+    if any(ch.isdigit() for ch in alnum):
+        variants = _generate_leetspeak_variants(alnum, max_variants=32)
+        for blocked in BLOCKED_WORDS:
+            b = _normalize_for_word_detection(blocked)
+            if not b:
+                continue
+            for v in variants:
+                if b in v:
+                    violations.append(f"Blocked word (leet variants): '{blocked}' detected")
+                    break
     
     return len(violations) > 0, list(set(violations))
 
