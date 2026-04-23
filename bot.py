@@ -74,6 +74,7 @@ WHITELIST_WORDS = [
     "skeleton", "skilled", "skiing", "skincare", "asking", "risking", "whisker", "brisket",
     "basket", "casket", "gasket", "masked", "asked", "tasked", "flask", "mask",
     "fantastic", "astic", "drastic", "plastic", "elastic", "classic", "jurassic",
+    " <:JX:1455505631850004520>", "<:Huh:1455505561100619867>", " <:Yaa:1455505606482853971>", "<:YAAAA:1455505494792732782>", 
     # NOTE: keep this list for real false-positives only.
     # User requested removing all ghost/paste/past whitelist entries.
 ]
