@@ -455,6 +455,43 @@ CUSTOM_EMOJI_RE = re.compile(r'<a?:\w+:\d+>')
 CUSTOM_EMOJI_NAME_RE = re.compile(r'<a?:([A-Za-z0-9_]+):\d+>')
 ZERO_WIDTH_RE = re.compile(r'[\u200b-\u200f\u2060\ufeff]')
 
+# Custom emojis that must never trigger moderation detections.
+# Supports both Discord raw form (<:name:id>/<a:name:id>) and plain :name: tokens.
+WHITELIST_CUSTOM_EMOJI_NAMES = {"yaaaa", "jxpro", "huh", "yaa", "jx"}
+WHITELIST_STICKER_NAMES = {"yaa", "huh"}
+RAW_CUSTOM_EMOJI_RE = re.compile(r'<a?:([A-Za-z0-9_]+):\d+>')
+PLAIN_COLON_EMOJI_RE = re.compile(r':([A-Za-z0-9_]+):')
+
+def strip_whitelisted_custom_emojis(text: str) -> str:
+    """Remove explicitly whitelisted custom emojis from text before moderation checks."""
+    if not text:
+        return ""
+
+    def _raw_repl(m: re.Match) -> str:
+        name = (m.group(1) or "").lower()
+        return " " if name in WHITELIST_CUSTOM_EMOJI_NAMES else m.group(0)
+
+    def _plain_repl(m: re.Match) -> str:
+        name = (m.group(1) or "").lower()
+        return " " if name in WHITELIST_CUSTOM_EMOJI_NAMES else m.group(0)
+
+    text = RAW_CUSTOM_EMOJI_RE.sub(_raw_repl, text)
+    text = PLAIN_COLON_EMOJI_RE.sub(_plain_repl, text)
+    return text
+
+def strip_whitelisted_sticker_names(text: str, sticker_names) -> str:
+    """Strip names of whitelisted stickers from text checks."""
+    if not text:
+        return ""
+    if not sticker_names:
+        return text
+    cleaned = text
+    for name in sticker_names:
+        if name in WHITELIST_STICKER_NAMES:
+            cleaned = re.sub(rf"\b{re.escape(name)}\b", " ", cleaned, flags=re.IGNORECASE)
+            cleaned = re.sub(rf":{re.escape(name)}:", " ", cleaned, flags=re.IGNORECASE)
+    return cleaned
+
 def _custom_emoji_to_letters(text: str) -> str:
     """
     Convert custom emojis like <:A:123> or <:regional_indicator_a:123> into letters.
@@ -1245,8 +1282,19 @@ async def process_message(message, is_edit=False):
     if not guild_member:
         return
     
+    sticker_names = {((getattr(s, "name", "") or "").lower()) for s in getattr(message, "stickers", [])}
+
+    # If this is a sticker-only message and all stickers are whitelisted, allow it immediately.
+    if sticker_names and all(name in WHITELIST_STICKER_NAMES for name in sticker_names) and not (message.content or "").strip():
+        await bot.process_commands(message)
+        return
+
+    # Remove trusted custom emojis/sticker names so they never trigger false positives.
+    content_for_checks = strip_whitelisted_custom_emojis(message.content)
+    content_for_checks = strip_whitelisted_sticker_names(content_for_checks, sticker_names)
+
     # Check auto-reply first (works for everyone including bypass roles)
-    auto_reply = check_auto_reply(message.content)
+    auto_reply = check_auto_reply(content_for_checks)
     if auto_reply:
         try:
             await message.reply(auto_reply)
@@ -1259,13 +1307,26 @@ async def process_message(message, is_edit=False):
 
     # Fast bypass detection for emoji-letter chains and emoji spam (including multi-account stitching)
     try:
-        if await handle_stitched_bypass(message, guild_member, is_edit=is_edit):
+        stitched_message_content = content_for_checks
+        if stitched_message_content != message.content:
+            # Lightweight message-like proxy with sanitized content for stitch checks.
+            class _MsgProxy:
+                pass
+            msg_proxy = _MsgProxy()
+            msg_proxy.content = stitched_message_content
+            msg_proxy.channel = message.channel
+            msg_proxy.author = message.author
+            msg_proxy.id = message.id
+            msg_proxy.guild = message.guild
+            if await handle_stitched_bypass(msg_proxy, guild_member, is_edit=is_edit):
+                return
+        elif await handle_stitched_bypass(message, guild_member, is_edit=is_edit):
             return
     except Exception:
         pass
     
     # Check STRICT non-English - ONLY ENGLISH ALLOWED
-    if detect_non_english(message.content):
+    if detect_non_english(content_for_checks):
         try:
             await message.delete()
         except discord.Forbidden:
@@ -1300,7 +1361,7 @@ async def process_message(message, is_edit=False):
         return
     
     # Analyze content for violations
-    is_violation, violation_reasons = analyze_message_content(message.content)
+    is_violation, violation_reasons = analyze_message_content(content_for_checks)
     
     if is_violation:
         try:
