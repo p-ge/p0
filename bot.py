@@ -451,6 +451,7 @@ def comprehensive_unicode_to_ascii(text):
     return ''.join(result)
 
 REGIONAL_INDICATOR_TEXT_RE = re.compile(r':regional_indicator_([a-z]):', re.IGNORECASE)
+REGIONAL_INDICATOR_TEXT_FLEX_RE = re.compile(r':\s*regional_indicator_([a-z])\s*:', re.IGNORECASE)
 CUSTOM_EMOJI_RE = re.compile(r'<a?:\w+:\d+>')
 CUSTOM_EMOJI_NAME_RE = re.compile(r'<a?:([A-Za-z0-9_]+):\d+>')
 ZERO_WIDTH_RE = re.compile(r'[\u200b-\u200f\u2060\ufeff]')
@@ -478,6 +479,30 @@ def strip_whitelisted_custom_emojis(text: str) -> str:
     text = RAW_CUSTOM_EMOJI_RE.sub(_raw_repl, text)
     text = PLAIN_COLON_EMOJI_RE.sub(_plain_repl, text)
     return text
+
+def sanitize_message_for_moderation(text: str) -> str:
+    """
+    Normalize Discord custom emoji tags before moderation scans.
+    - Convert <:Name:123> / <a:Name:123> -> :name: (drop numeric IDs to avoid leetspeak false positives)
+    - Remove explicitly whitelisted custom emoji names entirely
+    - Keep non-whitelisted names as :name: so bypass checks can still inspect names
+    """
+    if not text:
+        return ""
+
+    def _raw_to_token(m: re.Match) -> str:
+        name = (m.group(1) or "").lower()
+        if name in WHITELIST_CUSTOM_EMOJI_NAMES:
+            return " "
+        return f" :{name}: "
+
+    def _strip_whitelisted_plain(m: re.Match) -> str:
+        name = (m.group(1) or "").lower()
+        return " " if name in WHITELIST_CUSTOM_EMOJI_NAMES else m.group(0)
+
+    sanitized = RAW_CUSTOM_EMOJI_RE.sub(_raw_to_token, text)
+    sanitized = PLAIN_COLON_EMOJI_RE.sub(_strip_whitelisted_plain, sanitized)
+    return sanitized
 
 def strip_whitelisted_sticker_names(text: str, sticker_names) -> str:
     """Strip names of whitelisted stickers from text checks."""
@@ -686,13 +711,15 @@ def detect_regional_indicator_text(text: str):
 
     violations = []
 
-    # Check literal tokens
+    # Check literal tokens (strict and flexible forms)
     matches = REGIONAL_INDICATOR_TEXT_RE.findall(text)
+    matches.extend(REGIONAL_INDICATOR_TEXT_FLEX_RE.findall(text))
 
     # Also check demojized form (in case unicode flags/emojis get converted)
     try:
         dem = emoji.demojize(text)
         matches.extend(REGIONAL_INDICATOR_TEXT_RE.findall(dem))
+        matches.extend(REGIONAL_INDICATOR_TEXT_FLEX_RE.findall(dem))
     except Exception:
         pass
 
@@ -1073,6 +1100,9 @@ def analyze_message_content(content):
     if not content or len(content) < 1:
         return False, []
     
+    # Always sanitize raw custom emoji tags first to avoid digit-ID false positives.
+    content = sanitize_message_for_moderation(content)
+
     violations = []
     
     # Check for multi-line ASCII art
@@ -1290,7 +1320,7 @@ async def process_message(message, is_edit=False):
         return
 
     # Remove trusted custom emojis/sticker names so they never trigger false positives.
-    content_for_checks = strip_whitelisted_custom_emojis(message.content)
+    content_for_checks = sanitize_message_for_moderation(message.content)
     content_for_checks = strip_whitelisted_sticker_names(content_for_checks, sticker_names)
 
     # Check auto-reply first (works for everyone including bypass roles)
