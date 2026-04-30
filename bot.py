@@ -462,8 +462,6 @@ ZERO_WIDTH_RE = re.compile(r'[\u200b-\u200f\u2060\ufeff]')
 # Supports both Discord raw form (<:name:id>/<a:name:id>) and plain :name: tokens.
 WHITELIST_CUSTOM_EMOJI_NAMES = {"yaaaa", "jxpro", "huh", "yaa", "jx"}
 WHITELIST_STICKER_NAMES = {"yaa", "huh"}
-# Keep empty unless you want to allow specific unicode emojis, e.g. {"🔥", "✅"}.
-WHITELIST_UNICODE_EMOJIS = set()
 RAW_CUSTOM_EMOJI_RE = re.compile(r'<a?:([A-Za-z0-9_]+):\d+>')
 PLAIN_COLON_EMOJI_RE = re.compile(r':([A-Za-z0-9_]+):')
 
@@ -542,44 +540,33 @@ def sanitize_message_for_moderation(text: str) -> str:
 
 def detect_non_whitelisted_emojis(text: str, sticker_names=None):
     """
-    Strict emoji allowlist mode:
-    - Any custom emoji not in WHITELIST_CUSTOM_EMOJI_NAMES is a violation.
-    - Any unicode emoji not in WHITELIST_UNICODE_EMOJIS is a violation.
-    - Any sticker not in WHITELIST_STICKER_NAMES is a violation.
+    Allow all normal emojis.
+    Only flag letter-style emoji bypass content (A-Z / regional indicators).
     """
     violations = []
 
-    # Stickers attached to message
-    for name in (sticker_names or set()):
-        if name and name.lower() not in WHITELIST_STICKER_NAMES:
-            violations.append(f"Non-whitelisted sticker detected: {name}")
-
     if not text:
-        return len(violations) > 0, violations
+        return False, []
 
-    # Raw Discord custom emojis: <:name:id> / <a:name:id>
+    # Raw Discord custom emojis: only letter-style names should be blocked.
     for m in RAW_CUSTOM_EMOJI_RE.finditer(text):
         name = (m.group(1) or "").lower()
-        if name not in WHITELIST_CUSTOM_EMOJI_NAMES:
-            violations.append(f"Non-whitelisted custom emoji detected: {name}")
+        if _is_letter_style_emoji_name(name):
+            violations.append(f"Letter-style custom emoji detected: {name}")
 
-    # Plain :name: tokens (users may paste token-style emoji names)
+    # Plain :name: tokens: only letter-style/regional names are blocked.
     for m in PLAIN_COLON_EMOJI_RE.finditer(text):
         name = (m.group(1) or "").lower()
-        if name.startswith("regional_indicator_"):
-            # Regional indicators are handled by dedicated bypass detector too.
-            continue
-        if name not in WHITELIST_CUSTOM_EMOJI_NAMES and name not in WHITELIST_STICKER_NAMES:
-            violations.append(f"Non-whitelisted emoji token detected: {name}")
+        if _is_letter_style_emoji_name(name):
+            violations.append(f"Letter-style emoji token detected: {name}")
 
-    # Unicode emojis
-    try:
-        for item in emoji.emoji_list(text):
-            e = item.get("emoji")
-            if e and e not in WHITELIST_UNICODE_EMOJIS:
-                violations.append(f"Non-whitelisted unicode emoji detected: {e}")
-    except Exception:
-        pass
+    # Unicode regional indicators and letter-tile emojis are blocked; others allowed.
+    unicode_ri = UNICODE_REGIONAL_INDICATOR_RE.findall(text)
+    if unicode_ri:
+        violations.append("Regional indicator unicode emoji detected")
+    unicode_tiles = UNICODE_LETTER_TILE_RE.findall(text)
+    if unicode_tiles:
+        violations.append("Letter-tile unicode emoji detected")
 
     return len(violations) > 0, list(set(violations))
 
