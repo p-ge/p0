@@ -67,6 +67,7 @@ BLOCKED_WORDS = [
     "skid", "skidded",
     "skidder", "skidding", "script kiddie", "scriptkiddie", "sk1d", "sk!d", "sk!dded",
     "skidd", "skido"
+    ".gg", "gg/"
 ]
 
 WHITELIST_WORDS = [
