@@ -101,7 +101,7 @@ ALLOWED_DOMAINS = [
 
 AUTO_REPLY_PATTERNS = {
     r'(?i)\b(?:how\s+to\s+buy|where\s+to\s+buy|how\s+do\s+i\s+buy|how\s+can\s+i\s+buy|how\s+to\s+get|where\s+to\s+get)\b.*\b(?:premium\s+)?key\b': {
-        'response': "You Can Buy Premium Key At https://discord.com/channels/1453057495034495069/1453066695022477617 ",
+        'response': "Please Read This To Get Key https://discord.com/channels/1453057495034495069/1453071647694393446 Or You Can Buy Premium Key At https://discord.com/channels/1453057495034495069/1453066695022477617 ",
         'description': 'Premium key purchase (canonical reply)'
     },
     r'(?i)(?:does|do|is)\s+(?:melee\s+)?(?:reach|aura)\s+(?:work|working)\s*(?:with|on)?\s*(?:fire\s+axe|axe)?': {
