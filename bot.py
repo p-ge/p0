@@ -66,8 +66,7 @@ BLOCKED_WORDS = [
     "nigga", "nigger", "niga",
     "skid", "skidded",
     "skidder", "skidding", "script kiddie", "scriptkiddie", "sk1d", "sk!d", "sk!dded",
-    "skidd", "skido", 
-    ".gg/"
+    "skidd", "skido"
 ]
 
 WHITELIST_WORDS = [
