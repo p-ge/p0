@@ -101,7 +101,7 @@ ALLOWED_DOMAINS = [
 
 AUTO_REPLY_PATTERNS = {
     r'(?i)\b(?:how\s+to\s+buy|where\s+to\s+buy|how\s+do\s+i\s+buy|how\s+can\s+i\s+buy|how\s+to\s+get|where\s+to\s+get)\b.*\b(?:premium\s+)?key\b': {
-        'response': "Please Read This To Get Key https://discord.com/channels/1453057495034495069/1453071647694393446 Or You Can Buy Premium Key At https://discord.com/channels/1453057495034495069/1453066695022477617 ",
+        'response': "Please Read This To Get Key https://discord.com/channels/1453057495034495069/1508324683202691153 Or You Can Buy Premium Key At https://discord.com/channels/1453057495034495069/1508324855832117358 ",
         'description': 'Premium key purchase (canonical reply)'
     },
     r'(?i)(?:does|do|is)\s+(?:melee\s+)?(?:reach|aura)\s+(?:work|working)\s*(?:with|on)?\s*(?:fire\s+axe|axe)?': {
@@ -117,11 +117,11 @@ AUTO_REPLY_PATTERNS = {
         'description': 'Script location'
     },
     r'(?i)(?:where|how)\s+(?:to\s+get|can\s+i\s+get|do\s+i\s+get)\s+(?:a\s+)?key': {
-        'response': "Please read https://discord.com/channels/1453057495034495069/1453069855787061369 to get your key, or you can buy a premium key at https://discord.com/channels/1453057495034495069/1453066695022477617 🔑",
+        'response': "Please read https://discord.com/channels/1453057495034495069/1508324683202691153 to get your key, or you can buy a premium key at https://discord.com/channels/1453057495034495069/1508324855832117358 🔑",
         'description': 'Key acquisition guide'
     },
     r'(?i)(?:where|how)\s+(?:to\s+buy|can\s+i\s+buy)\s+(?:premium\s+)?key': {
-        'response': "You can buy a premium key at https://discord.com/channels/1453057495034495069/1453066695022477617 💎",
+        'response': "You can buy a premium key at https://discord.com/channels/1453057495034495069/1508324855832117358 💎",
         'description': 'Premium key purchase'
     },
     r'(?i)why\s+(?:is\s+)?my\s+key\s+(?:not\s+working|broken|invalid)': {
